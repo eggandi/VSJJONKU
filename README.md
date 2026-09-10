@@ -54,6 +54,16 @@ npx --yes @vscode/vsce package --allow-missing-repository
 Pop-Location
 ```
 
+### 사용자 인증이 필요한 단계
+
+Codex CLI 같은 로컬 Agent는 위 설치와 이후 스크립트 실행을 자동화할 수 있다. 다만 다음 인증·계정 작업은 사용자 계정에서 한 번 직접 처리해야 한다.
+
+1. VS Code에서 GitHub 또는 Microsoft 계정으로 로그인하고 VS Code Remote Tunnel 사용을 승인한다.
+2. OpenAI Platform에서 Secure MCP Tunnel을 만들고, `Tunnels Read + Use` runtime API key를 만든다.
+3. ChatGPT 개발자 모드에서 개인 MCP 앱을 만들고 해당 Secure MCP Tunnel을 연결한다.
+
+토큰·API key·로그인 세션은 저장소에 넣지 않는다. Agent에게 설치를 맡길 때는 “README의 처음 한 번 설치를 실행하고, 사용자 인증이 필요한 단계에서 멈춰라”라고 지시하면 된다.
+
 OpenAI Platform에서 Secure MCP Tunnel을 하나 만들고, `Tunnels Read + Use` 권한만 가진 runtime API key를 만든다. `JJONKU` 저장소와 작업 폴더를 같은 `workspace` 폴더에 둔다. Platform에서 받은 공식 Windows `tunnel-client` 압축을 아래 런타임 폴더에 풀고 프로필을 만든다.
 
 ```text

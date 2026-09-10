@@ -2,6 +2,7 @@
 
 ## 2026-09-11
 
+- Clarified README bootstrap ownership: local agents can install and build, while VS Code authentication, OpenAI Tunnel/API-key creation, and ChatGPT MCP app connection remain explicit user-account steps.
 - Added managed sibling `JJONKU` junction support in Workspace Bridge version 0.1.6. All ordinary symbolic links remain denied; a policy must name the direct link and its exact sibling target, which is resolved and verified per RPC. The lifecycle script now creates the `Workspace\JJONKU -> ..\JJONKU` junction and defaults its runtime to sibling `Workspace\VSJJONKU`.
 - Rewrote README installation around the actual clean-clone flow: Python environment, VSIX package, runtime-local tunnel-client profile, required environment variables, normal lifecycle, and ChatGPT Tool refresh. Reproducible test/build artifacts are already excluded by `.gitignore`.
 - Folder policy is now reloaded for every authenticated Bridge RPC, so permission changes apply to the next Tool call after the updated extension is installed. `start-vsjjonku.ps1` now invokes `code-tunnel.exe` directly, preventing `tunnel` and `kill` from being opened as VS Code file arguments.
