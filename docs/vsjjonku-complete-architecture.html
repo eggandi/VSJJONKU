@@ -1,0 +1,49 @@
+<section id="vsjjonku-complete-architecture" aria-labelledby="vsjjonku-architecture-title">
+  <style>
+    #vsjjonku-complete-architecture { color: var(--foreground); font: inherit; }
+    #vsjjonku-complete-architecture .flow { display: grid; gap: 10px; }
+    #vsjjonku-complete-architecture .node { padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--card-foreground); }
+    #vsjjonku-complete-architecture .node strong { display: block; font-weight: 500; }
+    #vsjjonku-complete-architecture .arrow { color: var(--muted-foreground); text-align: center; line-height: 1; }
+    #vsjjonku-complete-architecture .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+    #vsjjonku-complete-architecture .enforced { border-color: var(--green); }
+    #vsjjonku-complete-architecture .pending { border-color: var(--orange); }
+    #vsjjonku-complete-architecture .blocked { border-color: var(--destructive); }
+    #vsjjonku-complete-architecture .label { color: var(--muted-foreground); }
+    #vsjjonku-complete-architecture code { overflow-wrap: anywhere; }
+    @media (max-width: 520px) { #vsjjonku-complete-architecture .split { grid-template-columns: 1fr; } }
+  </style>
+  <h2 id="vsjjonku-architecture-title">VS쫀쿠 — 현재 구현 구조</h2>
+  <div class="flow" aria-label="ChatGPT에서 VS Code Workspace까지의 실제 도구 호출 경로">
+    <div class="node enforced"><strong>웹 ChatGPT · VSJJONKU 플러그인</strong><span class="label">실제 <code>list_directory</code> 호출 검증 완료</span></div>
+    <div class="arrow" aria-hidden="true">↓ MCP</div>
+    <div class="node enforced"><strong>OpenAI Secure MCP Tunnel</strong><span class="label">인증된 외부 통로</span></div>
+    <div class="arrow" aria-hidden="true">↓ outbound HTTPS</div>
+    <div class="node enforced"><strong>로컬 tunnel-client</strong><span class="label">tunnel health · ready HTTP 200</span></div>
+    <div class="arrow" aria-hidden="true">↓ 127.0.0.1:8000</div>
+    <div class="node enforced"><strong>VS쫀쿠 MCP Gateway</strong><span class="label">MCP v2 · <code>server/discover</code> · 도구 안전 힌트</span></div>
+    <div class="arrow" aria-hidden="true">↓ Bridge token · 127.0.0.1:38991</div>
+    <div class="node enforced"><strong>VS Code Workspace Extension</strong><span class="label">Remote Tunnel에서 열린 Workspace Extension Host</span></div>
+    <div class="arrow" aria-hidden="true">↓ VS Code Extension API</div>
+    <div class="node enforced"><strong>JJONKU Workspace</strong><span class="label">경로 이탈 · 민감 파일 · 심볼릭 링크 차단</span></div>
+  </div>
+  <div class="split">
+    <div class="node enforced">
+      <strong>폴더 정책 — 현재 강제 중</strong>
+      <span class="label"><code>read</code>만 허용. list/read/search/git 가능, write/change/delete는 실제 실행 차단.</span>
+    </div>
+    <div class="node pending">
+      <strong>세션 키 만료 게이트 — 구현 완료, 키 설정 대기</strong>
+      <span class="label">로컬 운영자가 30분 또는 60분마다 4자리 숫자키를 재입력해 lease를 연장.</span>
+    </div>
+  </div>
+  <div class="flow" style="margin-top:14px" aria-label="세션 키 만료 게이트 동작">
+    <div class="node"><strong>로컬 운영자</strong><span class="label"><code>session_gate configure</code> / <code>renew</code></span></div>
+    <div class="arrow" aria-hidden="true">↓ 키는 로컬 CLI에만 입력</div>
+    <div class="node"><strong>Workspace 밖 lease 파일</strong><span class="label">scrypt hash + salt + 만료 시각만 저장</span></div>
+    <div class="arrow" aria-hidden="true">↓ 1초 간격 감시</div>
+    <div class="node"><strong>Gateway session gate</strong><span class="label">도구 호출 전 활성 lease 확인</span></div>
+    <div class="arrow" aria-hidden="true">↓ 만료 시</div>
+    <div class="node blocked"><strong>Gateway 종료 · exit code 75</strong><span class="label">터널은 살아 있어도 로컬 MCP 도구는 중단</span></div>
+  </div>
+</section>

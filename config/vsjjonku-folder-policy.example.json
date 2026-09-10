@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "path": ".",
+      "permissions": {
+        "read": true
+      }
+    },
+    {
+      "path": "src",
+      "permissions": {
+        "write": true,
+        "change": true
+      }
+    },
+    {
+      "path": "docs",
+      "permissions": {
+        "change": false,
+        "delete": false
+      }
+    }
+  ]
+}

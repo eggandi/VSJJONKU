@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+vscode-extension/node_modules/
+vscode-extension/out/
+src/*.egg-info/
+.tunnel-test-profile/
+.vscode-extension-test-profile/
+.vscode-extension-security-test-profile/
+.vscode-extension-policy-test-profile/
+vscode-extension/*.vsix
+.env
+.env.*
+!.env.example
+gateway.*.log
