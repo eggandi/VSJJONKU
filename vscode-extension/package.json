@@ -1,8 +1,8 @@
 {
   "name": "vsjjonku-workspace-bridge",
   "displayName": "VS쫀쿠 Workspace Bridge",
-  "description": "Local read-only bridge between VS쫀쿠 and a VS Code Workspace.",
-  "version": "0.1.0",
+  "description": "Local policy-controlled bridge between VS쫀쿠 and a VS Code Workspace.",
+  "version": "0.1.6",
   "publisher": "vsjjonku",
   "engines": {
     "vscode": "^1.137.0"

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -50,19 +50,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .get<number>("bridgePort", 38991);
     const port = readBridgePort(process.env.VSJJONKU_BRIDGE_PORT, configuredPort);
     const bridgeToken = readBridgeToken(process.env.VSJJONKU_BRIDGE_TOKEN);
-    const policy = await loadFolderPolicy(process.env.VSJJONKU_POLICY_PATH);
+    const policyPath = resolveFolderPolicyPath(process.env.VSJJONKU_POLICY_PATH);
     const bridge = createServer((request, response) => {
-        void handleRequest(request, response, bridgeToken, policy);
+        void handleRequest(request, response, bridgeToken, () => loadFolderPolicy(policyPath));
     });
-
-    bridge.listen(port, "127.0.0.1");
-    context.subscriptions.push(closeServer(bridge));
+    bridge.on("error", (error: Error) => {
+        console.error("VSJJONKU Bridge server error.", error);
+    });
+    bridge.listen(port, "127.0.0.1", () => {
+        console.info(`VSJJONKU Bridge listening on 127.0.0.1:${port}.`);
+    });
+    context.subscriptions.push(new vscode.Disposable(() => bridge.close()));
 }
 
-async function loadFolderPolicy(policyPath: string | undefined): Promise<FolderPolicy> {
+function resolveFolderPolicyPath(policyPath: string | undefined): string {
     if (!policyPath || !isAbsolute(policyPath)) {
         throw new Error("VSJJONKU_POLICY_PATH must be an absolute path outside the Workspace.");
     }
+    const resolvedPath = resolve(policyPath);
+    return resolvedPath;
+}
+
+async function loadFolderPolicy(policyPath: string): Promise<FolderPolicy> {
     const root = workspaceRoot();
     const resolvedPath = resolve(policyPath);
     if (root.scheme === "file" && isInsideWorkspace(root.fsPath, resolvedPath)) {
@@ -70,21 +79,67 @@ async function loadFolderPolicy(policyPath: string | undefined): Promise<FolderP
     }
     let policy: FolderPolicy;
     try {
-        policy = parseFolderPolicy(readFileSync(resolvedPath, "utf8"));
+        policy = parseFolderPolicy(readFileSync(policyPath, "utf8"));
     } catch (error) {
         if (error instanceof Error) {
             throw new Error(`Could not load folder policy: ${error.message}`);
         }
         throw new Error("Could not load folder policy.");
     }
+    await validateManagedLinks(policy);
     for (const rule of policy.rules) {
-        const directory = await workspaceUri(rule.path);
+        const directory = await workspaceUri(rule.path, policy);
         const stat = await vscode.workspace.fs.stat(directory);
         if ((stat.type & vscode.FileType.Directory) === 0) {
             throw new Error(`Folder policy path is not a directory: ${rule.path}`);
         }
     }
     return policy;
+}
+
+async function validateManagedLinks(policy: FolderPolicy): Promise<void> {
+    if (policy.managedLinks.length === 0) {
+        return;
+    }
+    const root = workspaceRoot();
+    if (root.scheme !== "file") {
+        throw new Error("Managed links require a local file Workspace.");
+    }
+    for (const link of policy.managedLinks) {
+        const linkUri = vscode.Uri.joinPath(root, link.path);
+        let isLink: boolean;
+        try {
+            isLink = lstatSync(linkUri.fsPath).isSymbolicLink();
+        } catch {
+            throw new Error(`Managed link is missing: ${link.path}`);
+        }
+        if (!isLink) {
+            throw new Error(`Managed link is not a symbolic link or junction: ${link.path}`);
+        }
+        const expectedTarget = resolve(root.fsPath, link.target);
+        let actualTarget: string;
+        try {
+            actualTarget = realpathSync(linkUri.fsPath);
+        } catch {
+            throw new Error(`Managed link target cannot be resolved: ${link.path}`);
+        }
+        if (!sameLocalPath(actualTarget, expectedTarget)) {
+            throw new Error(`Managed link target does not match policy: ${link.path}`);
+        }
+        const targetStat = await vscode.workspace.fs.stat(vscode.Uri.file(actualTarget));
+        if ((targetStat.type & vscode.FileType.Directory) === 0) {
+            throw new Error(`Managed link target is not a directory: ${link.path}`);
+        }
+    }
+}
+
+function sameLocalPath(left: string, right: string): boolean {
+    const normalize = (path: string) => resolve(path).replace(/[\\/]+$/, "");
+    const normalizedLeft = normalize(left);
+    const normalizedRight = normalize(right);
+    return process.platform === "win32"
+        ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+        : normalizedLeft === normalizedRight;
 }
 
 function isInsideWorkspace(workspacePath: string, candidatePath: string): boolean {
@@ -110,15 +165,11 @@ function readBridgePort(environmentValue: string | undefined, configuredPort: nu
     return parsed;
 }
 
-function closeServer(server: Server): vscode.Disposable {
-    return new vscode.Disposable(() => server.close());
-}
-
 async function handleRequest(
     request: IncomingMessage,
     response: ServerResponse,
     bridgeToken: string,
-    policy: FolderPolicy,
+    loadPolicy: () => Promise<FolderPolicy>,
 ): Promise<void> {
     if (!isAuthorized(request, bridgeToken)) {
         return send(response, 401, { ok: false, error: "Unauthorized." });
@@ -134,6 +185,7 @@ async function handleRequest(
 
     try {
         const rpc = parseRpcRequest(await readBody(request));
+        const policy = await loadPolicy();
         const result = await dispatch(rpc, policy);
         return send(response, 200, { ok: true, result });
     } catch (error) {
@@ -203,6 +255,8 @@ async function dispatch(request: RpcRequest, policy: FolderPolicy): Promise<unkn
                 readRequiredString(params, "content"),
                 policy,
             );
+        case "create_directory":
+            return createDirectory(readRequiredString(params, "path"), policy);
         case "change_file":
             return changeFile(
                 readRequiredString(params, "path"),
@@ -211,6 +265,8 @@ async function dispatch(request: RpcRequest, policy: FolderPolicy): Promise<unkn
             );
         case "delete_file":
             return deleteFile(readRequiredString(params, "path"), policy);
+        case "delete_directory":
+            return deleteDirectory(readRequiredString(params, "path"), policy);
         case "git_status":
             assertFolderPermission(policy, ".", "read");
             return runGit(["status", "--short", "--branch"]);
@@ -230,17 +286,28 @@ function workspaceRoot(): vscode.Uri {
     return folders[0].uri;
 }
 
-async function workspaceUri(relativePath: string): Promise<vscode.Uri> {
+async function workspaceUri(relativePath: string, policy: FolderPolicy): Promise<vscode.Uri> {
     const parts = validateRelativePath(relativePath);
     let current = workspaceRoot();
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
         current = vscode.Uri.joinPath(current, part);
         const stat = await vscode.workspace.fs.stat(current);
-        if ((stat.type & vscode.FileType.SymbolicLink) !== 0) {
+        if (
+            (stat.type & vscode.FileType.SymbolicLink) !== 0 &&
+            !isManagedLinkAt(policy, parts, index)
+        ) {
             throw new Error("Symbolic links are not accessible.");
         }
     }
     return current;
+}
+
+function isManagedLinkAt(policy: FolderPolicy, parts: string[], index: number): boolean {
+    return index === 0 && policy.managedLinks.some((link) => link.path === parts[0]);
+}
+
+function isManagedLinkPath(policy: FolderPolicy, path: string): boolean {
+    return policy.managedLinks.some((link) => link.path === normalizeFolderPath(path));
 }
 
 function validateRelativePath(relativePath: string): string[] {
@@ -261,7 +328,7 @@ async function listDirectory(
     path: string,
     policy: FolderPolicy,
 ): Promise<Array<{ name: string; type: string }>> {
-    const directory = await workspaceUri(path);
+    const directory = await workspaceUri(path, policy);
     const stat = await vscode.workspace.fs.stat(directory);
     if ((stat.type & vscode.FileType.Directory) === 0) {
         throw new Error("Path is not a directory.");
@@ -270,7 +337,11 @@ async function listDirectory(
     const entries = await vscode.workspace.fs.readDirectory(directory);
     return entries
         .filter(([name, type]) => {
-            if (isDeniedPathPart(name) || (type & vscode.FileType.SymbolicLink) !== 0) {
+            const childPath = joinFolderPath(path, name);
+            if (
+                isDeniedPathPart(name) ||
+                ((type & vscode.FileType.SymbolicLink) !== 0 && !isManagedLinkPath(policy, childPath))
+            ) {
                 return false;
             }
             if ((type & vscode.FileType.Directory) === 0) {
@@ -278,11 +349,14 @@ async function listDirectory(
             }
             return allowsFolder(policy, joinFolderPath(path, name), "read");
         })
-        .map(([name, type]) => ({ name, type: fileTypeName(type) }));
+        .map(([name, type]) => {
+            const childPath = joinFolderPath(path, name);
+            return { name, type: isManagedLinkPath(policy, childPath) ? "directory" : fileTypeName(type) };
+        });
 }
 
 async function readFile(path: string, policy: FolderPolicy): Promise<{ path: string; content: string }> {
-    const file = await workspaceUri(path);
+    const file = await workspaceUri(path, policy);
     const stat = await vscode.workspace.fs.stat(file);
     if ((stat.type & vscode.FileType.File) === 0) {
         throw new Error("Path is not a file.");
@@ -300,7 +374,7 @@ async function writeNewFile(
     content: string,
     policy: FolderPolicy,
 ): Promise<{ path: string; bytesWritten: number }> {
-    const file = await newWorkspaceFileUri(path);
+    const file = await newWorkspaceFileUri(path, policy);
     assertFolderPermission(policy, parentFolderPath(path), "write");
     if (await workspacePathExists(file)) {
         throw new Error("File already exists; use change_file to replace it.");
@@ -310,12 +384,25 @@ async function writeNewFile(
     return { path, bytesWritten: bytes.byteLength };
 }
 
+async function createDirectory(
+    path: string,
+    policy: FolderPolicy,
+): Promise<{ path: string; created: true }> {
+    const directory = await newWorkspaceDirectoryUri(path, policy);
+    assertFolderPermission(policy, parentFolderPath(path), "write");
+    if (await workspacePathExists(directory)) {
+        throw new Error("Directory already exists.");
+    }
+    await vscode.workspace.fs.createDirectory(directory);
+    return { path, created: true };
+}
+
 async function changeFile(
     path: string,
     content: string,
     policy: FolderPolicy,
 ): Promise<{ path: string; bytesWritten: number }> {
-    const file = await workspaceUri(path);
+    const file = await workspaceUri(path, policy);
     const stat = await vscode.workspace.fs.stat(file);
     if ((stat.type & vscode.FileType.File) === 0) {
         throw new Error("Path is not a file.");
@@ -327,13 +414,34 @@ async function changeFile(
 }
 
 async function deleteFile(path: string, policy: FolderPolicy): Promise<{ path: string; deleted: true }> {
-    const file = await workspaceUri(path);
+    const file = await workspaceUri(path, policy);
     const stat = await vscode.workspace.fs.stat(file);
     if ((stat.type & vscode.FileType.File) === 0) {
         throw new Error("delete_file only permits a single file; recursive deletion is not supported.");
     }
     assertFolderPermission(policy, parentFolderPath(path), "delete");
     await vscode.workspace.fs.delete(file, { recursive: false, useTrash: false });
+    return { path, deleted: true };
+}
+
+async function deleteDirectory(path: string, policy: FolderPolicy): Promise<{ path: string; deleted: true }> {
+    const parts = validateRelativePath(path);
+    if (parts.length === 0) {
+        throw new Error("Workspace root cannot be deleted.");
+    }
+    if (isManagedLinkPath(policy, path)) {
+        throw new Error("Managed link roots cannot be deleted.");
+    }
+    const directory = await workspaceUri(path, policy);
+    const stat = await vscode.workspace.fs.stat(directory);
+    if ((stat.type & vscode.FileType.Directory) === 0) {
+        throw new Error("Path is not a directory.");
+    }
+    assertFolderPermission(policy, parentFolderPath(path), "delete");
+    if ((await vscode.workspace.fs.readDirectory(directory)).length !== 0) {
+        throw new Error("Directory is not empty; recursive deletion is not supported.");
+    }
+    await vscode.workspace.fs.delete(directory, { recursive: false, useTrash: false });
     return { path, deleted: true };
 }
 
@@ -345,15 +453,27 @@ function encodeContent(content: string): Uint8Array {
     return bytes;
 }
 
-async function newWorkspaceFileUri(path: string): Promise<vscode.Uri> {
+async function newWorkspaceFileUri(path: string, policy: FolderPolicy): Promise<vscode.Uri> {
+    return newWorkspaceEntryUri(path, "File", policy);
+}
+
+async function newWorkspaceDirectoryUri(path: string, policy: FolderPolicy): Promise<vscode.Uri> {
+    return newWorkspaceEntryUri(path, "Directory", policy);
+}
+
+async function newWorkspaceEntryUri(
+    path: string,
+    entryType: string,
+    policy: FolderPolicy,
+): Promise<vscode.Uri> {
     const parts = validateRelativePath(path);
     if (parts.length === 0) {
-        throw new Error("File path must not be the Workspace root.");
+        throw new Error(`${entryType} path must not be the Workspace root.`);
     }
-    const parent = await workspaceUri(parts.slice(0, -1).join("/") || ".");
+    const parent = await workspaceUri(parts.slice(0, -1).join("/") || ".", policy);
     const parentStat = await vscode.workspace.fs.stat(parent);
     if ((parentStat.type & vscode.FileType.Directory) === 0) {
-        throw new Error("File parent is not a directory.");
+        throw new Error(`${entryType} parent is not a directory.`);
     }
     return vscode.Uri.joinPath(parent, parts[parts.length - 1]);
 }
@@ -378,7 +498,7 @@ async function searchCode(
     if (query.length === 0 || query.length > 200) {
         throw new Error("Query must contain 1 to 200 characters.");
     }
-    const scope = await workspaceUri(path);
+    const scope = await workspaceUri(path, policy);
     const files: vscode.Uri[] = [];
     const scopeStat = await vscode.workspace.fs.stat(scope);
     const scopeFolder = (scopeStat.type & vscode.FileType.Directory) !== 0
@@ -386,7 +506,7 @@ async function searchCode(
         : parentFolderPath(path);
     assertFolderPermission(policy, scopeFolder, "read");
     const reachedLimit = (scopeStat.type & vscode.FileType.Directory) !== 0
-        ? await collectFiles(scope, files, policy)
+        ? await collectFiles(scope, files, policy, scopeFolder)
         : addFile(scope, files);
     const matches: SearchMatch[] = [];
     for (const file of files) {
@@ -424,25 +544,26 @@ async function collectFiles(
     directory: vscode.Uri,
     files: vscode.Uri[],
     policy: FolderPolicy,
+    directoryPath: string,
 ): Promise<boolean> {
     for (const [name, type] of await vscode.workspace.fs.readDirectory(directory)) {
         if (files.length >= MAX_SEARCH_FILES) {
             return true;
         }
+        const childPath = joinFolderPath(directoryPath, name);
         if (
             EXCLUDED_DIRECTORIES.has(name) ||
             isDeniedPathPart(name) ||
-            (type & vscode.FileType.SymbolicLink) !== 0
+            ((type & vscode.FileType.SymbolicLink) !== 0 && !isManagedLinkPath(policy, childPath))
         ) {
             continue;
         }
         const child = vscode.Uri.joinPath(directory, name);
         if ((type & vscode.FileType.Directory) !== 0) {
-            const childFolder = vscode.workspace.asRelativePath(child, false) || ".";
-            if (!allowsFolder(policy, childFolder, "read")) {
+            if (!allowsFolder(policy, childPath, "read")) {
                 continue;
             }
-            if (await collectFiles(child, files, policy)) {
+            if (await collectFiles(child, files, policy, childPath)) {
                 return true;
             }
         } else if ((type & vscode.FileType.File) !== 0 && addFile(child, files)) {

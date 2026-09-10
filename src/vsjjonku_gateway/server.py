@@ -89,6 +89,13 @@ def write_file(path: str, content: str) -> Any:
     return _bridge().call("write_file", {"path": path, "content": content})
 
 
+@server.tool(annotations=_CREATE_FILE)
+def create_directory(path: str) -> Any:
+    """Create one new Workspace directory. Its parent directory must already exist."""
+
+    return _bridge().call("create_directory", {"path": path})
+
+
 @server.tool(annotations=_MODIFY_FILE)
 def change_file(path: str, content: str) -> Any:
     """Replace one existing UTF-8 file after the folder's change permission is granted."""
@@ -101,6 +108,13 @@ def delete_file(path: str) -> Any:
     """Delete exactly one file after the folder's delete permission is granted."""
 
     return _bridge().call("delete_file", {"path": path})
+
+
+@server.tool(annotations=_MODIFY_FILE)
+def delete_directory(path: str) -> Any:
+    """Delete one empty directory after the parent folder's delete permission is granted."""
+
+    return _bridge().call("delete_directory", {"path": path})
 
 
 @server.tool(annotations=_READ_ONLY)

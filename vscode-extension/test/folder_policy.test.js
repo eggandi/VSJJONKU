@@ -30,3 +30,28 @@ test("rejects invalid policy paths and permissions", () => {
         /invalid permission/,
     );
 });
+
+test("accepts only direct managed links to a sibling directory", () => {
+    const policy = parseFolderPolicy(JSON.stringify({
+        version: 1,
+        rules: [{ path: ".", permissions: { read: true } }],
+        managedLinks: [{ path: "JJONKU", target: "../JJONKU" }],
+    }));
+    assert.deepEqual(policy.managedLinks, [{ path: "JJONKU", target: "../JJONKU" }]);
+    assert.throws(
+        () => parseFolderPolicy(JSON.stringify({
+            version: 1,
+            rules: [{ path: ".", permissions: { read: true } }],
+            managedLinks: [{ path: "tools/JJONKU", target: "../JJONKU" }],
+        })),
+        /direct Workspace children/,
+    );
+    assert.throws(
+        () => parseFolderPolicy(JSON.stringify({
+            version: 1,
+            rules: [{ path: ".", permissions: { read: true } }],
+            managedLinks: [{ path: "JJONKU", target: "../../Windows" }],
+        })),
+        /one safe sibling directory/,
+    );
+});

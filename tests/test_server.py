@@ -17,8 +17,9 @@ class ServerToolAnnotationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(tools["write_file"].annotations.read_only_hint)
         self.assertFalse(tools["write_file"].annotations.destructive_hint)
-        for name in ("change_file", "delete_file"):
+        self.assertFalse(tools["create_directory"].annotations.read_only_hint)
+        self.assertFalse(tools["create_directory"].annotations.destructive_hint)
+        for name in ("change_file", "delete_file", "delete_directory"):
             annotations = tools[name].annotations
             self.assertFalse(annotations.read_only_hint)
             self.assertTrue(annotations.destructive_hint)
-

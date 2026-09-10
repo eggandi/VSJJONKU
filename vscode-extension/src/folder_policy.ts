@@ -7,9 +7,15 @@ export type FolderRule = {
     permissions: Partial<Record<Capability, boolean>>;
 };
 
+export type ManagedLink = {
+    path: string;
+    target: string;
+};
+
 export type FolderPolicy = {
     version: 1;
     rules: FolderRule[];
+    managedLinks: ManagedLink[];
 };
 
 export function parseFolderPolicy(source: string): FolderPolicy {
@@ -28,7 +34,10 @@ export function parseFolderPolicy(source: string): FolderPolicy {
     if (rules.length === 0) {
         throw new Error("Folder policy must contain at least one rule.");
     }
-    return { version: 1, rules };
+    const managedLinks = parsed.managedLinks === undefined
+        ? []
+        : parseManagedLinks(parsed.managedLinks);
+    return { version: 1, rules, managedLinks };
 }
 
 export function allowsFolder(
@@ -69,6 +78,36 @@ function parseRule(value: unknown, paths: Set<string>): FolderRule {
     return { path, permissions };
 }
 
+function parseManagedLinks(value: unknown): ManagedLink[] {
+    if (!Array.isArray(value)) {
+        throw new Error("managedLinks must be an array.");
+    }
+    const paths = new Set<string>();
+    return value.map((link) => {
+        if (!isRecord(link) || typeof link.path !== "string" || typeof link.target !== "string") {
+            throw new Error("Each managed link must contain path and target.");
+        }
+        const path = normalizeFolderPath(link.path);
+        if (path.includes("/")) {
+            throw new Error("Managed link paths must be direct Workspace children.");
+        }
+        if (paths.has(path)) {
+            throw new Error("Folder policy cannot contain duplicate managed links.");
+        }
+        const targetParts = link.target.split(/[\\/]+/).filter((part) => part.length > 0 && part !== ".");
+        if (
+            targetParts.length !== 2 ||
+            targetParts[0] !== ".." ||
+            targetParts[1] === ".." ||
+            isDeniedLinkTargetPart(targetParts[1])
+        ) {
+            throw new Error("Managed link targets must name one safe sibling directory.");
+        }
+        paths.add(path);
+        return { path, target: `../${targetParts[1]}` };
+    });
+}
+
 export function normalizeFolderPath(path: string): string {
     if (path === ".") {
         return path;
@@ -93,4 +132,8 @@ function pathDepth(path: string): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDeniedLinkTargetPart(part: string): boolean {
+    return part.length === 0 || part.includes(":") || part.startsWith(".");
 }

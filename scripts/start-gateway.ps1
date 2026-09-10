@@ -3,7 +3,6 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$McpPort = 8000,
     [Parameter(Mandatory = $true)]
-    [ValidateScript({ [System.IO.Path]::IsPathFullyQualified($_) })]
     [string]$SessionGatePath
 )
 
@@ -18,9 +17,14 @@ if (-not $env:VSJJONKU_BRIDGE_TOKEN -or $env:VSJJONKU_BRIDGE_TOKEN.Length -lt 32
 }
 
 $env:VSJJONKU_MCP_PORT = $McpPort.ToString()
+$isDriveAbsolutePath = $SessionGatePath -match '^[a-zA-Z]:[\\/]'
+$isUncAbsolutePath = $SessionGatePath -match '^\\\\[^\\]+\\[^\\]+'
+if (-not ($isDriveAbsolutePath -or $isUncAbsolutePath)) {
+    throw "SessionGatePath must be an absolute Windows or UNC path."
+}
 $resolvedGatePath = [System.IO.Path]::GetFullPath($SessionGatePath)
 $resolvedProjectRoot = [System.IO.Path]::GetFullPath($projectRoot)
-$workspacePrefix = $resolvedProjectRoot.TrimEnd('\\', '/') + '\\'
+$workspacePrefix = $resolvedProjectRoot.TrimEnd('\', '/') + '\'
 if ($resolvedGatePath.Equals($resolvedProjectRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $resolvedGatePath.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "SessionGatePath must be outside the Workspace."
 }

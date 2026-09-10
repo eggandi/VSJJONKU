@@ -27,7 +27,9 @@ arbitrary SSH endpoint or as the MCP exposure mechanism.
   grants `read`, `write`, `change`, `delete`, and `exec` independently; details
   are in `folder-policy.md`.
 - Paths must be relative, and traversal (`..`), sensitive path components, and
-  symbolic links are rejected.
+  symbolic links are rejected. A policy can declare only a direct `JJONKU`
+  link to one configured sibling directory; the Bridge resolves and verifies
+  that target on every RPC. The link root itself cannot be replaced or deleted.
 - `.env` and `.env.*`, SSH key names, `credentials*`, `.ssh`, `.aws`, `.gnupg`,
   and common private-key suffixes are excluded from listing, reading, and code
   search.

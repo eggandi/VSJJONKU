@@ -9,8 +9,8 @@ file-level exceptions are the fixed sensitive-path denials in `security.md`.
 - `write`: create a new file through `write_file`; overwriting is refused.
 - `change`: replace an existing file through `change_file`. Move and rename are
   not exposed.
-- `delete`: remove exactly one file through `delete_file`. Directory and
-  recursive deletion are not exposed.
+- `delete`: remove one file or an empty directory. Recursive deletion is not
+  exposed.
 - `exec`: run an allowlisted command. Not exposed yet and will remain
   Workspace-scoped rather than folder-scoped.
 
@@ -45,6 +45,24 @@ file, use `..`, or be absolute.
 Permissions are inherited from the nearest ancestor that defines that specific
 capability. Absent permissions are denied. Therefore, `src` inherits `read`
 from `.`, adds `write` and `change`, and `docs` explicitly denies `delete`.
+
+## Managed JJONKU link
+
+The Bridge normally rejects all symbolic links and junctions. A policy may
+explicitly allow a direct child link to one sibling directory:
+
+```json
+"managedLinks": [
+  { "path": "JJONKU", "target": "../JJONKU" }
+]
+```
+
+`path` must be one direct child of the opened Workspace. `target` must be one
+sibling directory. On every RPC the Bridge resolves the link and requires its
+actual target to equal the configured target. It still blocks links inside that
+target, sensitive paths, replacement or deletion of the `JJONKU` link root,
+and recursive deletion. Add normal folder permission rules for `JJONKU` when
+it needs permissions different from the Workspace root.
 
 `read`, `write`, `change`, and `delete` are enforced by their corresponding
 MCP tools. `exec` remains a reserved capability until an allowlisted command

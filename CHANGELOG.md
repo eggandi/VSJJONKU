@@ -1,5 +1,22 @@
 # 변경 이력
 
+## 2026-09-11
+
+- Added managed sibling `JJONKU` junction support in Workspace Bridge version 0.1.6. All ordinary symbolic links remain denied; a policy must name the direct link and its exact sibling target, which is resolved and verified per RPC. The lifecycle script now creates the `Workspace\JJONKU -> ..\JJONKU` junction and defaults its runtime to sibling `Workspace\VSJJONKU`.
+- Rewrote README installation around the actual clean-clone flow: Python environment, VSIX package, runtime-local tunnel-client profile, required environment variables, normal lifecycle, and ChatGPT Tool refresh. Reproducible test/build artifacts are already excluded by `.gitignore`.
+- Folder policy is now reloaded for every authenticated Bridge RPC, so permission changes apply to the next Tool call after the updated extension is installed. `start-vsjjonku.ps1` now invokes `code-tunnel.exe` directly, preventing `tunnel` and `kill` from being opened as VS Code file arguments.
+- Fixed Workspace Extension activation with no folder open. Version 0.1.3 now waits for exactly one Workspace folder and starts the Bridge when that folder is opened, rather than permanently failing during Remote Tunnel connection.
+- Simplified Bridge startup in version 0.1.4: the loopback listener starts as soon as the Remote Extension Host is alive, while Workspace-folder and external-policy validation remain enforced for every file RPC. Bridge listen failures are now logged explicitly.
+- Hardened lifecycle startup against a conflicting Desktop Remote Tunnel. The script no longer runs global `code-tunnel tunnel kill`; it stops only a previous `vs-jjonku` process and reports a separately active `desktop-...` tunnel.
+- Isolated the Remote Extension Host from previously installed personal extensions by using the runtime `bridge-extensions` directory instead of the shared `extensions` directory. The start script installs only the VS쫀쿠 Bridge VSIX there.
+- Added destructive `delete_directory(path)` in Extension and MCP Gateway version 0.1.5. It requires `delete` permission on the parent, accepts only an empty non-root directory, and never performs recursive deletion.
+- Changed lifecycle defaults so `policy.json` and `session-gate.json` are resolved from the selected runtime directory. For this checkout, the default is the sibling `..\VSJJONKU` directory; no current-directory-relative policy path is used.
+- Added `create_directory(path)`, a write-permission Tool that creates exactly one new directory only when its parent already exists. Recursive parent creation and overwriting an existing entry remain disallowed.
+- Added `start-vsjjonku.ps1` and `stop-vsjjonku.ps1` to manage the Gateway, VS Code Tunnel, and tunnel-client as one local lifecycle. Process state is stored outside the Workspace and shutdown validates recorded process markers before terminating a process tree.
+- Fixed `start-gateway.ps1` absolute-path validation for Windows PowerShell 5.1, which does not provide `[System.IO.Path]::IsPathFullyQualified()`.
+- 재현·배포를 위한 Windows 설치 절차를 README에 추가했다. Python Gateway, VSIX 빌드·설치, 외부 정책·세션 게이트, Secure MCP Tunnel, ChatGPT 연결 순서를 한 문서로 정리했다.
+- README를 완성품 사용자 안내가 아닌 포크·확장 가능한 기반 프로젝트 안내로 보완했다. Gateway Tool, Extension Bridge RPC, 폴더 정책의 역할과 새 Tool 추가 절차를 기록했다.
+
 ## 2026-09-10
 
 - Verified the first real Remote Tunnel cycle with a Desktop VS Code client: Remote Tunnel Workspace -> Workspace Extension Bridge (`/health` HTTP 200) -> local MCP Gateway -> `list_directory(".")` result. Browser embedding inside the Extension Development Host was identified as unsupported and is not part of the operating path.
