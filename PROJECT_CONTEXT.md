@@ -2,13 +2,14 @@
 
 ## 목적
 
-VS Code Remote Tunnel로 연결한 Workspace를 제한된 MCP Tool로 노출하는 로컬 개발 연동 Gateway를 설계하고 구현한다.
+로컬 모델 또는 WebGPT가 VS Code Workspace를 제한된 명령으로 다루도록 하는 로컬 Relay 기반 개발 연동 계층을 구현한다. OpenAI Secure MCP Tunnel과 VS Code Remote Tunnel은 선택적인 외부 연결 경로다.
 
 ## 작업 범위
 
 - Workspace 내부의 파일 탐색·읽기·코드 검색·Git 상태 확인을 위한 read-only MCP Tool
 - VS Code Remote 연동 어댑터와 MCP Gateway의 분리
 - 이후 단계에서 명시적 정책을 적용한 write/build/test/exec Tool
+- 로컬 모델 CLI와 WebGPT 브라우저 확장을 별도 Agent 진입점으로 두고, 공통 Relay·Workspace Extension으로 연결
 
 ## 시작 상태
 
@@ -32,6 +33,13 @@ VS Code Remote Tunnel로 연결한 Workspace를 제한된 MCP Tool로 노출하�
 - 개발 순서: 1) VS Code 접근 방식 확정, 2) Wrapper 구현·테스트, 3) 보안 Gateway 구현.
 - VS Code 접근 방식: `extensionKind: ["workspace"]`인 VS Code Workspace Extension. Gateway는 loopback Bridge RPC로 Extension에 요청한다.
 - SSH는 VS Code Remote Tunnel의 외부 제어 인터페이스로 사용하지 않는다.
+- 목표 기본 경로: `로컬 모델 -> Local Agent CLI -> Local Relay -> 로컬 VS Code Workspace Extension -> Workspace`.
+- WebGPT 경로: `ChatGPT 웹 -> Browser Extension -> Local Relay -> Workspace Extension`. WebGPT와 Local CLI Agent는 서로 통신하지 않는다.
+- Relay는 모델이 아니라 인증·작업 큐·결과 저장 계층이다. 실제 권한 검사는 Workspace Extension의 folder policy가 계속 수행한다.
+- WebGPT 결과 자동 왕복은 검토 중이다. 결과를 ChatGPT 입력창에 자동 전송하는 기능은 아직 구현하지 않았으며, 자동 명령 큐잉과 변경·삭제 권한을 분리해야 한다.
+- WebGPT 읽기 경로 결정: 정책이 허용한 Workspace 트리·파일을 만료형 read-only capability URL Web Portal로 제공하고, WebGPT는 일반 공개 페이지처럼 URL과 파일 링크를 읽는다. Portal URL은 랜덤 bearer token·짧은 TTL·폐기·`noindex`를 사용하며 민감 파일과 path traversal은 서버에서 차단한다.
+- WebGPT 쓰기 경로 결정: public Web Portal에는 쓰기 API를 만들지 않는다. WebGPT가 명시적 write/change/delete 실행안을 출력하면 브라우저 확장이 이를 Relay로 복사·전달한다. 쓰기 권한·정책·변경 및 삭제 확인은 기존 Workspace Extension 경계에 남긴다.
+- 초기 로컬 모델 테스트 ID는 `NousResearch/Hermes-3-Llama-3.2-3B`다. 3B는 명령 포맷·연결 시연용으로 사용하며, 복잡한 코딩 작업의 기본 모델 성능은 보장하지 않는다.
 
 ## 검토 중인 내용 및 미결 쟁점
 
@@ -65,4 +73,8 @@ VS Code Remote Tunnel로 연결한 Workspace를 제한된 MCP Tool로 노출하�
 - Version 0.1.6 supports the intended sibling layout: `workspace\JJONKU` is source, `workspace\VSJJONKU` is RuntimeRoot, and a remotely opened sibling project receives a `JJONKU -> ..\JJONKU` managed junction. The external policy must declare that exact link. Every RPC resolves and validates its target; all other links remain denied.
 - Relay MVP added: `src/vsjjonku_gateway/relay.py` hosts an authenticated in-memory command queue and private control page. Extension version 0.1.7 can long-poll an explicitly configured Relay and execute returned Workspace commands under the existing policy. The Relay is loopback-only by default; public hosting requires an HTTPS reverse proxy.
 - `browser-extension/` now provides an unpacked Chromium extension that parses only explicit `[VSJJONKU_EXEC]` JSON blocks from ChatGPT pages. It queues all actions for review by default; optional automatic queueing is limited to non-destructive existing Workspace methods. No ChatGPT cookie, whole-conversation scrape, or Remote Tunnel page control is implemented.
+- 현재 브랜치: `feature/relay-browser` (`1a316e0`). `master`는 Relay 전 변경 커밋 `c1ac632`으로 복구되어 있다.
+- 로컬 전환 구현: `local_agent.py`, `start-local-relay.ps1`, `stop-local-relay.ps1`, `run-local-agent.ps1`, DPAPI 기반 RuntimeRoot token helper, 로컬 policy 예시, Local Agent 단위 테스트, Relay-only Workspace Extension 활성화 변경. `docs/local-relay.md`에 운영 절차를 추가했다.
+- Web Portal 구현: Relay가 authenticated local operator 요청으로 1~60분짜리 read-only capability를 만들고, `/r/<capability>/`의 폴더·파일 링크 요청을 `list_directory`/`read_file` Relay 명령으로 Workspace Extension에 전달한다. capability는 최대 200 HTTP 요청·메모리 수명이며 쓰기 endpoint가 없다. `scripts/new-read-portal.ps1`과 `docs/web-portal.md`를 추가했다.
+- 검증 완료: Python 테스트 21개, Extension TypeScript compile/check 및 policy test, VSIX 0.1.8 packaging, browser extension syntax/parser test, Local Relay/Portal PowerShell parser. 실제 VS Code Local Relay E2E와 외부 HTTPS publish는 아직 미수행이다.
 - 배포 저장소에는 `.venv`, `node_modules`, Extension 컴파일 결과물과 VSIX를 포함하지 않는다. `README.md`의 clean-clone 설치 절차가 이들을 재생성하며, OpenAI `tunnel-client`와 its profile은 Workspace 외부 RuntimeRoot에 둔다.

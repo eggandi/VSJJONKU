@@ -57,12 +57,31 @@ type RelayCommand = {
 };
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    const relay = readRelayConfig();
     const configuredPort = vscode.workspace
         .getConfiguration("vsjjonku")
         .get<number>("bridgePort", 38991);
     const port = readBridgePort(process.env.VSJJONKU_BRIDGE_PORT, configuredPort);
-    const bridgeToken = readBridgeToken(process.env.VSJJONKU_BRIDGE_TOKEN);
     const policyPath = resolveFolderPolicyPath(process.env.VSJJONKU_POLICY_PATH);
+    const bridgeToken = process.env.VSJJONKU_BRIDGE_TOKEN;
+    if (bridgeToken) {
+        startBridge(context, port, readBridgeToken(bridgeToken), policyPath);
+    } else if (!relay) {
+        throw new Error(
+            "VSJJONKU requires a Bridge token for MCP mode or Relay configuration for local mode.",
+        );
+    }
+    if (relay) {
+        startRelayPolling(context, relay, policyPath);
+    }
+}
+
+function startBridge(
+    context: vscode.ExtensionContext,
+    port: number,
+    bridgeToken: string,
+    policyPath: string,
+): void {
     const bridge = createServer((request, response) => {
         void handleRequest(request, response, bridgeToken, () => loadFolderPolicy(policyPath));
     });
@@ -73,10 +92,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         console.info(`VSJJONKU Bridge listening on 127.0.0.1:${port}.`);
     });
     context.subscriptions.push(new vscode.Disposable(() => bridge.close()));
-    const relay = readRelayConfig();
-    if (relay) {
-        startRelayPolling(context, relay, policyPath);
-    }
 }
 
 function resolveFolderPolicyPath(policyPath: string | undefined): string {

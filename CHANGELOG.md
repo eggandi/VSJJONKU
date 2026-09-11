@@ -2,6 +2,9 @@
 
 ## 2026-09-11
 
+- Added a local-first Relay path on `feature/relay-browser`: a loopback-only Hermes 3B test CLI adapter, local Relay lifecycle scripts, DPAPI-protected RuntimeRoot tokens, a local policy example, and Relay-only Workspace Extension activation. Local documentation, unit/build verification, and VSIX 0.1.8 packaging are complete; real local VS Code E2E and public HTTPS publish remain pending.
+- Added a read-only Web Portal to the Relay: authenticated local creation of short-lived capability URLs, no-store/noindex HTML directory/file links, request budget and expiry, and per-request `list_directory`/`read_file` dispatch through the existing Workspace Extension policy. No Portal write endpoint is present.
+- Decided to split the planned WebGPT portal by capability: read-only Workspace browsing will use expiring capability URLs on a dedicated Web Portal, while all write/change/delete requests remain explicit browser-extension copy/Relay actions and never receive write capability through the Portal URL.
 - Added the first MCP-free Relay path: a private FastAPI command queue and control page, authenticated agent polling in the Workspace Extension, explicit Relay confirmation for destructive commands, startup script, tests, and operator documentation. Public deployment is intentionally not included; the Relay defaults to loopback and requires an HTTPS reverse proxy when exposed.
 - Added `browser-extension`, an unpacked Edge/Chrome Action Sender for explicit ChatGPT `[VSJJONKU_EXEC]` JSON blocks. It supports review-before-send by default and optional automatic queueing only for non-destructive existing Workspace methods; changing or deleting always requires local confirmation.
 - Clarified README bootstrap ownership: local agents can install and build, while VS Code authentication, OpenAI Tunnel/API-key creation, and ChatGPT MCP app connection remain explicit user-account steps.

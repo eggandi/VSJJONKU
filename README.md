@@ -9,7 +9,7 @@ ChatGPT → OpenAI Secure MCP Tunnel → local tunnel-client
 
 현재 제공 Tool은 `list_directory`, `read_file`, `search_code`, `git_status`, `git_diff`, `write_file`, `create_directory`, `change_file`, `delete_file`, `delete_directory`다. `delete_directory`는 비어 있는 폴더만 삭제하며 재귀 삭제와 Workspace 루트 삭제는 지원하지 않는다. `exec`, `build`, `test`는 다음 구현 단계다.
 
-MCP 외 실행 경로의 MVP도 포함한다. 자체 Relay 웹페이지가 명령을 큐에 넣고, Workspace Extension이 outbound polling으로 가져와 기존 정책 안에서 실행한다. 이 경로는 ChatGPT MCP가 아닌 별도 웹 UI용이며, 설정은 [Relay 운영 문서](docs/relay.md)를 따른다. ChatGPT 웹 응답에서 명시적으로 작성한 실행안만 반자동 전달하는 Chromium 확장은 [browser-extension](browser-extension/README.md)에 있다.
+MCP 외 실행 경로의 MVP도 포함한다. 자체 Relay 웹페이지가 명령을 큐에 넣고, Workspace Extension이 outbound polling으로 가져와 기존 정책 안에서 실행한다. [로컬 Relay와 Hermes 테스트 Agent](docs/local-relay.md)는 OpenAI 없이 같은 PC에서 동작한다. ChatGPT 웹 응답에서 명시적으로 작성한 실행안만 반자동 전달하는 Chromium 확장은 [browser-extension](browser-extension/README.md)에 있다. WebGPT가 일반 웹처럼 Workspace를 읽어야 하면 [읽기 전용 Web Portal](docs/web-portal.md)이 만료형 capability URL로 `list_directory`와 `read_file`만 제공한다.
 
 ## 이 저장소를 가져가서 커스텀하기
 

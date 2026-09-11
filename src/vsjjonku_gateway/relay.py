@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from html import escape
 import os
 import re
 import secrets
 import time
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
@@ -34,6 +36,10 @@ SUPPORTED_METHODS = frozenset(
     }
 )
 DESTRUCTIVE_METHODS = frozenset({"change_file", "delete_file", "delete_directory"})
+PORTAL_METHODS = frozenset({"list_directory", "read_file"})
+PORTAL_MAX_MINUTES = 60
+PORTAL_MAX_REQUESTS = 200
+PORTAL_COMMAND_TIMEOUT_SECONDS = 35
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,14 @@ class RelayCommand:
     created_at: float
     status: str = "queued"
     result: dict[str, Any] | None = None
+
+
+@dataclass
+class PortalSession:
+    capability: str
+    agent_id: str
+    expires_at: float
+    requests_remaining: int = PORTAL_MAX_REQUESTS
 
 
 class RelayStore:
@@ -114,15 +128,70 @@ class RelayStore:
         async with self._condition:
             return self._commands.get(request_id)
 
+    async def wait_for_result(
+        self, request_id: str, timeout_seconds: float
+    ) -> RelayCommand | None:
+        async with self._condition:
+            command = self._commands.get(request_id)
+            if command is None:
+                return None
+            try:
+                await asyncio.wait_for(
+                    self._condition.wait_for(
+                        lambda: (current := self._commands.get(request_id)) is None
+                        or current.result is not None
+                    ),
+                    timeout=timeout_seconds,
+                )
+            except TimeoutError:
+                return None
+            return self._commands.get(request_id)
+
+
+class PortalStore:
+    """Short-lived public read capability sessions kept only in relay memory."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, PortalSession] = {}
+
+    def create(self, agent_id: str, minutes: int) -> PortalSession:
+        self._purge_expired()
+        session = PortalSession(
+            capability=secrets.token_urlsafe(32),
+            agent_id=agent_id,
+            expires_at=time.time() + (minutes * 60),
+        )
+        self._sessions[session.capability] = session
+        return session
+
+    def use(self, capability: str) -> PortalSession:
+        self._purge_expired()
+        session = self._sessions.get(capability)
+        if session is None:
+            raise KeyError(capability)
+        if session.requests_remaining <= 0:
+            self._sessions.pop(capability, None)
+            raise KeyError(capability)
+        session.requests_remaining -= 1
+        return session
+
+    def _purge_expired(self) -> None:
+        now = time.time()
+        for capability, session in list(self._sessions.items()):
+            if session.expires_at <= now:
+                self._sessions.pop(capability, None)
+
 
 def create_app(
     settings: RelaySettings | None = None,
     store: RelayStore | None = None,
     session_gate: SessionGate | None = None,
+    portal_store: PortalStore | None = None,
 ) -> FastAPI:
     settings = settings or RelaySettings.from_environment()
     store = store or RelayStore()
     session_gate = session_gate or SessionGate(None)
+    portal_store = portal_store or PortalStore()
     app = FastAPI(title="VSJJONKU Relay", docs_url=None, redoc_url=None)
 
     @app.get("/", response_class=HTMLResponse)
@@ -200,6 +269,65 @@ def create_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="Command was not found.") from None
 
+    @app.post("/api/portals")
+    async def create_portal(
+        payload: dict[str, Any],
+        x_vsjjonku_web_token: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        require_token(x_vsjjonku_web_token, settings.web_token)
+        require_active_session(session_gate)
+        agent_id = validate_agent_id(payload.get("agentId"))
+        minutes = payload.get("minutes", 15)
+        if not isinstance(minutes, int) or not 1 <= minutes <= PORTAL_MAX_MINUTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"minutes must be an integer from 1 to {PORTAL_MAX_MINUTES}.",
+            )
+        return portal_view(portal_store.create(agent_id, minutes))
+
+    @app.get("/r/{capability}/", response_class=HTMLResponse)
+    async def portal_root(capability: str) -> HTMLResponse:
+        return await portal_directory_response(capability, ".")
+
+    @app.get("/r/{capability}/d/{path:path}", response_class=HTMLResponse)
+    async def portal_directory(capability: str, path: str) -> HTMLResponse:
+        return await portal_directory_response(capability, path)
+
+    @app.get("/r/{capability}/f/{path:path}", response_class=HTMLResponse)
+    async def portal_file(capability: str, path: str) -> HTMLResponse:
+        try:
+            session = portal_store.use(capability)
+            safe_path = validate_portal_path(path)
+            result = await portal_read_command(
+                store, session_gate, session, "read_file", {"path": safe_path}
+            )
+            if not isinstance(result, dict) or not isinstance(result.get("content"), str):
+                raise HTTPException(status_code=502, detail="Workspace returned an invalid file response.")
+            parent = parent_portal_path(safe_path)
+            body = (
+                f'<p><a href="{portal_directory_href(capability, parent)}">Up</a></p>'
+                f"<pre>{escape(result['content'])}</pre>"
+            )
+            return portal_html_response(f"VSJJONKU file: {safe_path}", body)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Portal capability is unavailable.") from None
+
+    async def portal_directory_response(capability: str, path: str) -> HTMLResponse:
+        try:
+            session = portal_store.use(capability)
+            safe_path = validate_portal_path(path)
+            result = await portal_read_command(
+                store, session_gate, session, "list_directory", {"path": safe_path}
+            )
+            if not isinstance(result, list):
+                raise HTTPException(status_code=502, detail="Workspace returned an invalid directory response.")
+            entries = portal_directory_entries(capability, safe_path, result)
+            up = "" if safe_path == "." else f'<p><a href="{portal_directory_href(capability, parent_portal_path(safe_path))}">Up</a></p>'
+            body = f"{up}<ul>{entries}</ul>"
+            return portal_html_response(f"VSJJONKU directory: {safe_path}", body)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Portal capability is unavailable.") from None
+
     return app
 
 
@@ -213,6 +341,92 @@ def require_active_session(session_gate: SessionGate) -> None:
         session_gate.require_active()
     except SessionGateError:
         raise HTTPException(status_code=403, detail="Local session gate is inactive.") from None
+
+
+async def portal_read_command(
+    store: RelayStore,
+    session_gate: SessionGate,
+    session: PortalSession,
+    method: str,
+    params: dict[str, str],
+) -> Any:
+    if method not in PORTAL_METHODS:
+        raise RuntimeError("Portal attempted an unsupported Workspace method.")
+    require_active_session(session_gate)
+    command = await store.enqueue(session.agent_id, method, params)
+    completed = await store.wait_for_result(command.request_id, PORTAL_COMMAND_TIMEOUT_SECONDS)
+    if completed is None or completed.result is None:
+        raise HTTPException(status_code=504, detail="Workspace did not answer before the portal request timed out.")
+    if completed.result.get("ok") is not True:
+        error = completed.result.get("error", "Workspace read failed.")
+        raise HTTPException(status_code=502, detail=str(error))
+    return completed.result.get("result")
+
+
+def validate_portal_path(value: str) -> str:
+    if not isinstance(value, str) or not value or value.startswith(("/", "\\")):
+        raise HTTPException(status_code=400, detail="Portal path must be Workspace-relative.")
+    parts = [part for part in value.replace("\\", "/").split("/") if part and part != "."]
+    if any(part == ".." or "\x00" in part for part in parts):
+        raise HTTPException(status_code=400, detail="Portal path traversal is not allowed.")
+    return "." if not parts else "/".join(parts)
+
+
+def parent_portal_path(path: str) -> str:
+    if path == "." or "/" not in path:
+        return "."
+    return path.rsplit("/", 1)[0]
+
+
+def portal_directory_href(capability: str, path: str) -> str:
+    if path == ".":
+        return f"/r/{quote(capability, safe='')}/"
+    return f"/r/{quote(capability, safe='')}/d/{quote(path, safe='/')}"
+
+
+def portal_directory_entries(capability: str, parent: str, entries: list[Any]) -> str:
+    links: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        entry_type = entry.get("type")
+        if not isinstance(name, str) or not isinstance(entry_type, str):
+            continue
+        try:
+            child_path = validate_portal_path(name if parent == "." else f"{parent}/{name}")
+        except HTTPException:
+            continue
+        if entry_type == "directory":
+            href = portal_directory_href(capability, child_path)
+            label = f"{name}/"
+        elif entry_type == "file":
+            href = f"/r/{quote(capability, safe='')}/f/{quote(child_path, safe='/')}"
+            label = name
+        else:
+            continue
+        links.append(f'<li><a href="{escape(href, quote=True)}">{escape(label)}</a></li>')
+    return "".join(links)
+
+
+def portal_html_response(title: str, body: str) -> HTMLResponse:
+    document = (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"robots\" content=\"noindex\">"
+        f"<title>{escape(title)}</title>"
+        "<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:70rem}"
+        "pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#0645ad}</style>"
+        f"</head><body><h1>{escape(title)}</h1>{body}</body></html>"
+    )
+    return HTMLResponse(
+        document,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Robots-Tag": "noindex",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+    )
 
 
 def validate_agent_id(value: object) -> str:
@@ -242,6 +456,16 @@ def command_view(command: RelayCommand) -> dict[str, Any]:
         "createdAt": command.created_at,
         "status": command.status,
         "result": command.result,
+    }
+
+
+def portal_view(session: PortalSession) -> dict[str, Any]:
+    return {
+        "capability": session.capability,
+        "agentId": session.agent_id,
+        "expiresAt": session.expires_at,
+        "requestsRemaining": session.requests_remaining,
+        "path": f"/r/{session.capability}/",
     }
 
 
