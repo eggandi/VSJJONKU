@@ -44,6 +44,18 @@ type SearchMatch = {
     text: string;
 };
 
+type RelayConfig = {
+    baseUrl: string;
+    agentId: string;
+    agentToken: string;
+};
+
+type RelayCommand = {
+    requestId: string;
+    method: string;
+    params: Record<string, unknown>;
+};
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const configuredPort = vscode.workspace
         .getConfiguration("vsjjonku")
@@ -61,6 +73,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         console.info(`VSJJONKU Bridge listening on 127.0.0.1:${port}.`);
     });
     context.subscriptions.push(new vscode.Disposable(() => bridge.close()));
+    const relay = readRelayConfig();
+    if (relay) {
+        startRelayPolling(context, relay, policyPath);
+    }
 }
 
 function resolveFolderPolicyPath(policyPath: string | undefined): string {
@@ -163,6 +179,147 @@ function readBridgePort(environmentValue: string | undefined, configuredPort: nu
         throw new Error("VSJJONKU_BRIDGE_PORT must be a valid TCP port.");
     }
     return parsed;
+}
+
+function readRelayConfig(): RelayConfig | undefined {
+    const relayUrl = process.env.VSJJONKU_RELAY_URL;
+    const agentId = process.env.VSJJONKU_RELAY_AGENT_ID;
+    const agentToken = process.env.VSJJONKU_RELAY_AGENT_TOKEN;
+    if (!relayUrl && !agentId && !agentToken) {
+        return undefined;
+    }
+    if (!relayUrl || !agentId || !agentToken || agentToken.length < 32) {
+        throw new Error(
+            "VSJJONKU relay requires URL, agent ID, and an agent token of at least 32 characters.",
+        );
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(agentId)) {
+        throw new Error("VSJJONKU relay agent ID is invalid.");
+    }
+    let parsed: URL;
+    try {
+        parsed = new URL(relayUrl);
+    } catch {
+        throw new Error("VSJJONKU relay URL is invalid.");
+    }
+    const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+        throw new Error("VSJJONKU relay must use HTTPS, except for a loopback development Relay.");
+    }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error("VSJJONKU relay URL must not contain credentials, a query, or a fragment.");
+    }
+    return {
+        baseUrl: parsed.toString().replace(/\/$/, ""),
+        agentId,
+        agentToken,
+    };
+}
+
+function startRelayPolling(
+    context: vscode.ExtensionContext,
+    relay: RelayConfig,
+    policyPath: string,
+): void {
+    let stopped = false;
+    context.subscriptions.push(new vscode.Disposable(() => {
+        stopped = true;
+    }));
+    void (async () => {
+        console.info(`VSJJONKU Relay polling started for agent ${relay.agentId}.`);
+        while (!stopped) {
+            try {
+                const response = await relayRequest(
+                    relay,
+                    `/api/agents/${encodeURIComponent(relay.agentId)}/poll`,
+                    { timeoutSeconds: 20 },
+                    27_000,
+                );
+                if (response === null) {
+                    continue;
+                }
+                const command = parseRelayCommand(response);
+                let result: Record<string, unknown>;
+                try {
+                    const policy = await loadFolderPolicy(policyPath);
+                    result = { ok: true, result: await dispatch(command, policy) };
+                } catch (error) {
+                    result = {
+                        ok: false,
+                        error: error instanceof Error ? error.message : "Workspace command failed.",
+                    };
+                }
+                await relayRequest(
+                    relay,
+                    `/api/agents/${encodeURIComponent(relay.agentId)}/results/${command.requestId}`,
+                    result,
+                    10_000,
+                );
+            } catch (error) {
+                console.error("VSJJONKU Relay polling failed.", error);
+                await delay(2_000);
+            }
+        }
+    })();
+}
+
+async function relayRequest(
+    relay: RelayConfig,
+    path: string,
+    payload: Record<string, unknown>,
+    timeoutMs: number,
+): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(`${relay.baseUrl}${path}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-VSJJONKU-Agent-Token": relay.agentToken,
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+        });
+        let decoded: unknown;
+        try {
+            decoded = await response.json();
+        } catch {
+            throw new Error("Relay returned invalid JSON.");
+        }
+        if (!response.ok) {
+            throw new Error("Relay rejected the Workspace Extension request.");
+        }
+        return decoded;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function parseRelayCommand(value: unknown): RelayCommand {
+    if (!isRecord(value)) {
+        throw new Error("Relay command must be an object.");
+    }
+    const requestId = value.requestId;
+    const method = value.method;
+    const params = value.params;
+    if (
+        typeof requestId !== "string" ||
+        !/^[a-f0-9]{32}$/.test(requestId) ||
+        typeof method !== "string" ||
+        !isRecord(params)
+    ) {
+        throw new Error("Relay command is invalid.");
+    }
+    return { requestId, method, params };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function delay(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function handleRequest(

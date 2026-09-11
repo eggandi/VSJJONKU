@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>VSJJONKU Action Sender</title>
+  <style>
+    body { box-sizing: border-box; font: 13px system-ui, sans-serif; margin: 0; min-width: 360px; padding: 14px; }
+    h1 { font-size: 17px; margin: 0 0 12px; }
+    label { display: block; font-weight: 600; margin-top: 9px; }
+    input { box-sizing: border-box; font: inherit; margin-top: 4px; padding: 6px; width: 100%; }
+    button { font: inherit; margin-top: 10px; padding: 6px 10px; }
+    #status { min-height: 18px; margin: 10px 0; white-space: pre-wrap; }
+    .pending { border-top: 1px solid #ddd; padding: 10px 0; }
+    .pending pre { background: #f4f4f4; font-size: 11px; max-height: 100px; overflow: auto; padding: 6px; white-space: pre-wrap; }
+    .danger { color: #a40000; font-weight: 600; }
+    .inline { font-weight: normal; margin-top: 8px; }
+    .inline input { vertical-align: middle; width: auto; }
+    #clear { float: right; }
+  </style>
+</head>
+<body>
+  <h1>VSJJONKU Action Sender</h1>
+  <label>Relay URL <input id="relayUrl" placeholder="http://127.0.0.1:8787"></label>
+  <label>Agent ID <input id="agentId" value="default"></label>
+  <label>Relay web token <input id="webToken" type="password" autocomplete="off"></label>
+  <label class="inline"><input id="autoQueue" type="checkbox"> 안전한 읽기/생성 명령 자동 큐잉</label>
+  <button id="save">설정 저장</button>
+  <div id="status" role="status"></div>
+  <h2>대기 작업 <button id="clear">비우기</button></h2>
+  <div id="pending"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "VSJJONKU Action Sender",
+  "version": "0.1.0",
+  "description": "Queues explicitly tagged ChatGPT work requests in a private VSJJONKU Relay.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "VSJJONKU Action Sender" },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["common.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

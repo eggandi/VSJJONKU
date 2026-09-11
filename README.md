@@ -9,6 +9,8 @@ ChatGPT → OpenAI Secure MCP Tunnel → local tunnel-client
 
 현재 제공 Tool은 `list_directory`, `read_file`, `search_code`, `git_status`, `git_diff`, `write_file`, `create_directory`, `change_file`, `delete_file`, `delete_directory`다. `delete_directory`는 비어 있는 폴더만 삭제하며 재귀 삭제와 Workspace 루트 삭제는 지원하지 않는다. `exec`, `build`, `test`는 다음 구현 단계다.
 
+MCP 외 실행 경로의 MVP도 포함한다. 자체 Relay 웹페이지가 명령을 큐에 넣고, Workspace Extension이 outbound polling으로 가져와 기존 정책 안에서 실행한다. 이 경로는 ChatGPT MCP가 아닌 별도 웹 UI용이며, 설정은 [Relay 운영 문서](docs/relay.md)를 따른다. ChatGPT 웹 응답에서 명시적으로 작성한 실행안만 반자동 전달하는 Chromium 확장은 [browser-extension](browser-extension/README.md)에 있다.
+
 ## 이 저장소를 가져가서 커스텀하기
 
 GitHub에서 **Fork**하거나 Template으로 새 저장소를 만든 뒤 사용한다. 배포자는 자신의 저장소 이름, VS Code Extension publisher, OpenAI Tunnel, 정책 파일을 사용한다. 이 저장소의 `VSJJONKU` Tunnel·Bridge token·정책 파일은 공유 대상이 아니다.
@@ -222,6 +224,29 @@ ChatGPT 개발자 모드에서 개인 앱을 만들고 Connection type을 **Tunn
 - Gateway를 종료하거나 세션 lease가 만료되면 ChatGPT 도구 호출도 중단된다.
 - 의존성을 지운 뒤에는 2단계의 가상환경 생성·설치를 다시 실행하면 된다.
 
+## ChatGPT 웹 반자동 실행안 전달
+
+MCP App을 쓰지 않는 경우에도, ChatGPT 웹은 작업안을 만들고 브라우저 확장이 그 중 명시적 명령 블록만 자체 Relay로 보낼 수 있다. 이 방식은 ChatGPT 탭이나 VS Code Remote Tunnel 웹페이지의 DOM을 원격 조작하지 않는다.
+
+```text
+ChatGPT 웹 응답의 VSJJONKU_EXEC JSON
+  → 사용자가 확인하거나 안전 명령만 자동 큐잉
+  → Relay → Workspace Extension outbound poll → 기존 Workspace 정책
+```
+
+1. [Relay 운영 문서](docs/relay.md)대로 Relay와 VS Code Tunnel을 같은 세션 게이트 설정으로 시작한다.
+2. Edge/Chrome에서 [browser-extension](browser-extension/README.md) 폴더를 압축 해제 확장으로 설치하고 Relay URL·web token을 입력한다.
+3. ChatGPT에는 아래 형식으로 실행안을 출력하도록 요청한다.
+
+````text
+[VSJJONKU_EXEC]
+```json
+{"method":"list_directory","params":{"path":"."}}
+```
+````
+
+확장은 현재 제공하는 Workspace 명령만 허용한다. `change_file`, `delete_file`, `delete_directory`는 항상 팝업에서 별도 확인을 해야 하며, Relay와 Workspace policy 모두에서 다시 검사한다. `exec`, `build`, `test`는 아직 이 경로에도 없다.
+
 ## 작업 트리
 
 ```text
@@ -229,6 +254,7 @@ src/vsjjonku_gateway/       Python MCP Gateway
 vscode-extension/           Workspace Extension Bridge
 config/                      비밀값을 제외한 정책 예시
 scripts/                     Gateway 및 Tunnel 실행 스크립트
+browser-extension/           ChatGPT 실행안 전달용 Chromium 확장
 docs/                        설계·보안·점검 문서
 tests/                       단위·통합 테스트
 ```

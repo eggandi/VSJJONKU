@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "A constrained MCP gateway for a VS Code workspace."
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115,<1.0",
     "mcp>=2.2.0,<3.0",
+    "uvicorn>=0.30,<1.0",
 ]
 
 [project.optional-dependencies]

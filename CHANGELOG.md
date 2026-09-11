@@ -2,6 +2,8 @@
 
 ## 2026-09-11
 
+- Added the first MCP-free Relay path: a private FastAPI command queue and control page, authenticated agent polling in the Workspace Extension, explicit Relay confirmation for destructive commands, startup script, tests, and operator documentation. Public deployment is intentionally not included; the Relay defaults to loopback and requires an HTTPS reverse proxy when exposed.
+- Added `browser-extension`, an unpacked Edge/Chrome Action Sender for explicit ChatGPT `[VSJJONKU_EXEC]` JSON blocks. It supports review-before-send by default and optional automatic queueing only for non-destructive existing Workspace methods; changing or deleting always requires local confirmation.
 - Clarified README bootstrap ownership: local agents can install and build, while VS Code authentication, OpenAI Tunnel/API-key creation, and ChatGPT MCP app connection remain explicit user-account steps.
 - Added managed sibling `JJONKU` junction support in Workspace Bridge version 0.1.6. All ordinary symbolic links remain denied; a policy must name the direct link and its exact sibling target, which is resolved and verified per RPC. The lifecycle script now creates the `Workspace\JJONKU -> ..\JJONKU` junction and defaults its runtime to sibling `Workspace\VSJJONKU`.
 - Rewrote README installation around the actual clean-clone flow: Python environment, VSIX package, runtime-local tunnel-client profile, required environment variables, normal lifecycle, and ChatGPT Tool refresh. Reproducible test/build artifacts are already excluded by `.gitignore`.
